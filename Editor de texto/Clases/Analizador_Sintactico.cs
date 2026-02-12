@@ -11,9 +11,11 @@ namespace Editor_de_texto.Clases
 		private int tokenIndex;
 		private RichTextBox CajaTexto2;
 		public int N_error { get; private set; }
-		private readonly string[] TiposDeDatos = { "int", "float", "char", "double", "long", "void" };
 
-		// --- TABLA DE SÍMBOLOS Y SEMÁNTICA ---
+		// Tipos de datos soportados
+		private readonly string[] TiposDeDatos = { "int", "float", "char", "double", "long", "void", "Int", "Float" };
+
+		// --- TABLA DE SÍMBOLOS ---
 		public struct Simbolo
 		{
 			public string Nombre;
@@ -21,7 +23,7 @@ namespace Editor_de_texto.Clases
 			public string Categoria; // "Variable" o "Funcion"
 		}
 		private List<Simbolo> TablaSimbolos = new List<Simbolo>();
-		private string tipoFuncionActual = ""; // Para validar el 'return'
+		private string tipoFuncionActual = "";
 
 		public Analizador_Sintactico(string archivoIntermedio, RichTextBox caja)
 		{
@@ -41,13 +43,14 @@ namespace Editor_de_texto.Clases
 				}
 				tokenBuffer.Add("EOF");
 			}
-			catch
+			catch (Exception ex)
 			{
+				CajaTexto2.AppendText("Error al leer archivo: " + ex.Message);
 				tokenBuffer.Add("EOF");
 			}
 		}
 
-		// --- MÉTODOS DE APOYO ---
+		// --- NAVEGACIÓN DE TOKENS ---
 		private string GetToken() => (tokenIndex < tokenBuffer.Count) ? tokenBuffer[tokenIndex++] : "EOF";
 		private string PeekToken() => (tokenIndex < tokenBuffer.Count) ? tokenBuffer[tokenIndex] : "EOF";
 		private void SkipLF() { while (PeekToken() == "LF") GetToken(); }
@@ -55,7 +58,10 @@ namespace Editor_de_texto.Clases
 		private void MatchToken(string expected)
 		{
 			SkipLF();
-			if (PeekToken() == expected) GetToken();
+			if (PeekToken() == expected)
+			{
+				GetToken();
+			}
 			else
 			{
 				N_error++;
@@ -63,49 +69,68 @@ namespace Editor_de_texto.Clases
 			}
 		}
 
-		private void Error(string msg) { N_error++; CajaTexto2.AppendText($"{msg}\n"); }
-		private bool IsTipoDato(string t) => Array.Exists(TiposDeDatos, e => e == t);
+		private void Error(string msg)
+		{
+			N_error++;
+			CajaTexto2.AppendText($"{msg}\n");
+		}
+
+		private bool IsTipoDato(string t) => Array.Exists(TiposDeDatos, e => e.Equals(t, StringComparison.OrdinalIgnoreCase));
 		private bool ExisteSimbolo(string nombre) => TablaSimbolos.Exists(s => s.Nombre == nombre);
 
-		// --- ANÁLISIS PRINCIPAL ---
+		// --- LÓGICA DE ANÁLISIS ---
+
 		public void Analisis_Sintactico()
 		{
 			CajaTexto2.AppendText("\n--- Iniciando Análisis Sintáctico y Semántico ---\n");
+			TablaSimbolos.Clear();
 			AnalizarPrograma();
-			if (N_error == 0) CajaTexto2.AppendText("\nResultado: Compilación Exitosa.\n");
+
+			if (N_error == 0) CajaTexto2.AppendText("\nResultado: Compilación Exitosa (0 errores).\n");
 			else CajaTexto2.AppendText($"\nResultado: {N_error} errores detectados.\n");
 		}
 
 		private void AnalizarPrograma()
 		{
 			SkipLF();
-			while (PeekToken() == "#") { AnalizarDirectiva(); SkipLF(); }
+			// 1. Directivas #include
+			while (PeekToken() == "#")
+			{
+				MatchToken("#");
+				if (GetToken() == "include")
+				{
+					MatchToken("<"); GetToken(); MatchToken(">");
+				}
+				SkipLF();
+			}
 
+			// 2. Variables Globales o Funciones
 			while (PeekToken() != "EOF")
 			{
 				SkipLF();
 				string t = PeekToken();
+
 				if (IsTipoDato(t))
 				{
-					if (PeekNextNoLF() == "main") AnalizarMain();
-					else if (EsDefinicionFuncion()) AnalizarDefinicionFuncion();
-					else AnalizarDeclaracion();
+					if (PeekNextNoLF().ToLower() == "main")
+					{
+						AnalizarMain();
+					}
+					else if (EsDefinicionFuncion())
+					{
+						AnalizarDefinicionFuncion();
+					}
+					else
+					{
+						AnalizarDeclaracion();
+					}
 				}
 				else if (t != "EOF")
 				{
-					Error($"Error: Token inesperado '{t}' fuera de contexto.");
+					Error($"Error: Token '{t}' no permitido fuera de funciones.");
 					GetToken();
 				}
 				SkipLF();
-			}
-		}
-
-		private void AnalizarDirectiva()
-		{
-			MatchToken("#");
-			if (GetToken() == "include")
-			{
-				MatchToken("<"); GetToken(); MatchToken(">");
 			}
 		}
 
@@ -115,33 +140,44 @@ namespace Editor_de_texto.Clases
 			string tipo = GetToken();
 			string nombre = GetToken();
 
-			// Validación Semántica: Duplicados
-			if (ExisteSimbolo(nombre)) Error($"Error Semántico: La variable '{nombre}' ya fue declarada.");
-			else TablaSimbolos.Add(new Simbolo { Nombre = nombre, Tipo = tipo, Categoria = "Variable" });
+			// Semántica: Declaración Duplicada
+			if (ExisteSimbolo(nombre))
+			{
+				Error($"Error Semántico: La variable '{nombre}' ya existe.");
+			}
+			else
+			{
+				TablaSimbolos.Add(new Simbolo { Nombre = nombre, Tipo = tipo, Categoria = "Variable" });
+			}
 
 			if (PeekToken() == "=")
 			{
 				MatchToken("=");
 				string valor = PeekToken();
-				// Validación Semántica: Tipo int vs float
-				if (tipo == "int" && valor.Contains("."))
-					Error($"Error Semántico: No se puede asignar float '{valor}' a int '{nombre}'.");
-
-				AnalizarExpresionSimple("inicialización", ";");
+				// Semántica: Validación de tipo (int = float)
+				if (tipo.ToLower() == "int" && valor.Contains("."))
+				{
+					Error($"Error Semántico: No puedes asignar un decimal '{valor}' a la variable entera '{nombre}'.");
+				}
+				AnalizarExpresionSimple("asignación", ";");
 			}
 			MatchToken(";");
 		}
 
 		private void AnalizarDefinicionFuncion()
 		{
-			tipoFuncionActual = GetToken(); // Tipo de retorno
+			SkipLF();
+			tipoFuncionActual = GetToken(); // Tipo de la función
 			string nombre = GetToken();
 
 			if (!ExisteSimbolo(nombre))
 				TablaSimbolos.Add(new Simbolo { Nombre = nombre, Tipo = tipoFuncionActual, Categoria = "Funcion" });
 
 			MatchToken("(");
-			if (IsTipoDato(PeekToken())) AnalizarParametros();
+			if (IsTipoDato(PeekToken()))
+			{
+				AnalizarParametros();
+			}
 			MatchToken(")");
 			AnalizarBloque();
 			tipoFuncionActual = "";
@@ -152,23 +188,41 @@ namespace Editor_de_texto.Clases
 			do
 			{
 				if (PeekToken() == ",") GetToken();
-				string tipo = GetToken();
-				string nombre = GetToken();
-				if (!ExisteSimbolo(nombre))
-					TablaSimbolos.Add(new Simbolo { Nombre = nombre, Tipo = tipo, Categoria = "Variable" });
+				SkipLF();
+
+				string tipo = PeekToken();
+				if (!IsTipoDato(tipo))
+				{
+					Error($"Error Sintáctico: Se esperaba tipo de dato en parámetros, se encontró '{tipo}'.");
+					break;
+				}
+				GetToken(); // Consume tipo
+
+				string nombre = PeekToken();
+				if (nombre == ")" || nombre == ",")
+				{
+					Error("Error Sintáctico: Falta el nombre del parámetro.");
+				}
+				else
+				{
+					nombre = GetToken();
+					if (!ExisteSimbolo(nombre))
+						TablaSimbolos.Add(new Simbolo { Nombre = nombre, Tipo = tipo, Categoria = "Variable" });
+				}
 			} while (PeekToken() == ",");
 		}
 
 		private void AnalizarMain()
 		{
-			tipoFuncionActual = GetToken(); // int
-			MatchToken("main"); MatchToken("("); MatchToken(")");
+			GetToken(); // int
+			MatchToken("main");
+			MatchToken("("); MatchToken(")");
 			AnalizarBloque();
-			tipoFuncionActual = "";
 		}
 
 		private void AnalizarBloque()
 		{
+			SkipLF();
 			MatchToken("{");
 			while (PeekToken() != "}" && PeekToken() != "EOF")
 			{
@@ -182,45 +236,68 @@ namespace Editor_de_texto.Clases
 		{
 			SkipLF();
 			string t = PeekToken();
-			if (IsTipoDato(t)) AnalizarDeclaracion();
-			else if (t == "if") { MatchToken("if"); ConsumirParentesis(); AnalizarBloque(); }
-			else if (t == "return" || t == "Return")
+
+			if (IsTipoDato(t))
+			{
+				AnalizarDeclaracion();
+			}
+			else if (t == "if")
+			{
+				MatchToken("if");
+				MatchToken("("); AnalizarExpresionSimple("condición if", ")"); MatchToken(")");
+				AnalizarBloque();
+			}
+			else if (t.ToLower() == "return")
 			{
 				GetToken();
 				string val = PeekToken();
-				// Validación Semántica: Return tipo
-				if (tipoFuncionActual == "int" && val.Contains("."))
-					Error("Error Semántico: El valor de retorno no coincide con el tipo 'int' de la función.");
+				// Semántica: Validar retorno de función int
+				if (tipoFuncionActual.ToLower() == "int" && val.Contains("."))
+					Error("Error Semántico: La función int no puede retornar un valor decimal.");
 
 				AnalizarExpresionSimple("return", ";");
 				MatchToken(";");
 			}
 			else
 			{
-				// Uso de variable o función
 				string id = GetToken();
 				if (id == "}" || id == "EOF") return;
 
+				// Semántica: Uso de variable no declarada
 				if (!ExisteSimbolo(id) && id != "printf" && id != "main")
-					Error($"Error Semántico: El identificador '{id}' no ha sido declarado.");
+					Error($"Error Semántico: '{id}' no ha sido declarado.");
 
 				string next = PeekToken();
-				if (next == "=") { MatchToken("="); AnalizarExpresionSimple("asignación", ";"); MatchToken(";"); }
-				else if (next == "(") { MatchToken("("); AnalizarExpresionSimple("argumentos", ")"); MatchToken(")"); MatchToken(";"); }
-				else if (next == "++" || next == "--") { GetToken(); MatchToken(";"); }
+				if (next == "=")
+				{
+					MatchToken("=");
+					AnalizarExpresionSimple("asignación", ";");
+					MatchToken(";");
+				}
+				else if (next == "(")
+				{
+					MatchToken("(");
+					AnalizarExpresionSimple("argumentos", ")");
+					MatchToken(")");
+					MatchToken(";");
+				}
+				else if (next == "++" || next == "--")
+				{
+					GetToken(); MatchToken(";");
+				}
 			}
 		}
 
-		private void AnalizarExpresionSimple(string ctx, string delim1, string delim2 = null)
+		private void AnalizarExpresionSimple(string ctx, string d1, string d2 = null)
 		{
 			int p = 0;
 			while (PeekToken() != "EOF")
 			{
 				string t = PeekToken();
-				if (p == 0 && (t == delim1 || t == delim2)) break;
+				if (p == 0 && (t == d1 || t == d2)) break;
 				if (t == ";" || t == "}")
-				{ // Freno de seguridad
-					if (p > 0) Error($"Error Sintáctico: Se esperaba cerrar paréntesis en {ctx}.");
+				{
+					if (p > 0) Error($"Error Sintáctico: Paréntesis sin cerrar en {ctx}.");
 					break;
 				}
 				t = GetToken();
@@ -228,22 +305,20 @@ namespace Editor_de_texto.Clases
 			}
 		}
 
-		private void ConsumirParentesis() { MatchToken("("); AnalizarExpresionSimple("paréntesis", ")"); MatchToken(")"); }
-
 		private bool EsDefinicionFuncion()
 		{
-			int offset = 1;
-			while (tokenIndex + offset < tokenBuffer.Count && tokenBuffer[tokenIndex + offset] == "LF") offset++;
-			offset++; // Saltar ID
-			while (tokenIndex + offset < tokenBuffer.Count && tokenBuffer[tokenIndex + offset] == "LF") offset++;
-			return (tokenIndex + offset < tokenBuffer.Count && tokenBuffer[tokenIndex + offset] == "(");
+			int off = 1;
+			while (tokenIndex + off < tokenBuffer.Count && tokenBuffer[tokenIndex + off] == "LF") off++;
+			off++; // Salta ID
+			while (tokenIndex + off < tokenBuffer.Count && tokenBuffer[tokenIndex + off] == "LF") off++;
+			return (tokenIndex + off < tokenBuffer.Count && tokenBuffer[tokenIndex + off] == "(");
 		}
 
 		private string PeekNextNoLF()
 		{
-			int offset = 1;
-			while (tokenIndex + offset < tokenBuffer.Count && tokenBuffer[tokenIndex + offset] == "LF") offset++;
-			return (tokenIndex + offset < tokenBuffer.Count) ? tokenBuffer[tokenIndex + offset] : "EOF";
+			int off = 1;
+			while (tokenIndex + off < tokenBuffer.Count && tokenBuffer[tokenIndex + off] == "LF") off++;
+			return (tokenIndex + off < tokenBuffer.Count) ? tokenBuffer[tokenIndex + off] : "EOF";
 		}
 	}
 }
