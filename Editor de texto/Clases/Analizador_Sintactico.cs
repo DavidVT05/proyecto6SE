@@ -6,539 +6,350 @@ using System.Collections.Generic;
 
 namespace Editor_de_texto.Clases
 {
-    public class Analizador_Sintactico
-    {
-        private List<string> tokenBuffer;
-        private int tokenIndex;
-        private RichTextBox CajaTexto2;
-        public int N_error { get; private set; }
-        private readonly string[] TiposDeDatos = { "int", "float", "char", "double", "long", "void" };
+	public class Analizador_Sintactico
+	{
+		private List<string> tokenBuffer;
+		private int tokenIndex;
+		private RichTextBox CajaTexto2;
+		public int N_error { get; private set; }
+		private readonly string[] TiposDeDatos = { "int", "float", "char", "double", "long", "void", "Int", "Float" };
 
-        public Analizador_Sintactico(string archivoIntermedio, RichTextBox caja)
-        {
-            CajaTexto2 = caja;
-            N_error = 0;
-            tokenIndex = 0;
+		public Analizador_Sintactico(string archivoIntermedio, RichTextBox caja)
+		{
+			CajaTexto2 = caja;
+			N_error = 0;
+			tokenIndex = 0;
 
-            try
-            {
-                tokenBuffer = new List<string>();
-                if (File.Exists(archivoIntermedio))
-                {
-                    using (StreamReader reader = new StreamReader(archivoIntermedio))
-                    {
-                        string line;
-                        while ((line = reader.ReadLine()) != null)
-                        {
-                            if (!string.IsNullOrWhiteSpace(line))
-                                tokenBuffer.Add(line.Trim());
-                        }
-                    }
-                }
-                tokenBuffer.Add("EOF");
-            }
-            catch (Exception ex)
-            {
-                caja.AppendText($"Error crítico: No se pudo leer el archivo intermedio: {ex.Message}\n");
-                tokenBuffer = new List<string>() { "EOF" };
-            }
-        }
-        // --- MÉTODOS AUXILIARES ---
-        private string GetToken() => (tokenIndex < tokenBuffer.Count) ? tokenBuffer[tokenIndex++] : "EOF";
-        private string PeekToken() => (tokenIndex < tokenBuffer.Count) ? tokenBuffer[tokenIndex] : "EOF";
-        private string PeekNextToken() => (tokenIndex + 1 < tokenBuffer.Count) ? tokenBuffer[tokenIndex + 1] : "EOF";
-        private void MatchToken(string expected)
-        {
-            string token = GetToken();
-            if (token != expected)
-            {
-                N_error++;
-                CajaTexto2.AppendText($"Error Sintáctico: Se esperaba '{expected}', se encontró '{token}'.\n");
-                // Intento de sincronización simple
-                if (PeekToken() == expected) GetToken();
-            }
-        }
-        private void Error(string msg) { N_error++; CajaTexto2.AppendText($"Error: {msg}\n"); }
-        private bool IsTipoDato(string t) { return Array.Exists(TiposDeDatos, e => e == t); }
-        // MÉTODOS DE EXPRESIÓN
-        // Función para consumir y validar una expresión simple hasta un separador (';', ')')
-        private void AnalizarExpresionSimple(string contexto, string finalDelimiter1, string finalDelimiter2 = null)
-        {
-            string t = PeekToken();
+			try
+			{
+				tokenBuffer = new List<string>();
+				if (File.Exists(archivoIntermedio))
+				{
+					using (StreamReader reader = new StreamReader(archivoIntermedio))
+					{
+						string line;
+						while ((line = reader.ReadLine()) != null)
+						{
+							if (!string.IsNullOrWhiteSpace(line))
+								tokenBuffer.Add(line.Trim());
+						}
+					}
+				}
+				tokenBuffer.Add("EOF");
+			}
+			catch (Exception ex)
+			{
+				caja.AppendText($"Error crítico: No se pudo leer el archivo intermedio: {ex.Message}\n");
+				tokenBuffer = new List<string>() { "EOF" };
+			}
+		}
 
-            if (t == "EOF")
-            {
-                Error($"EOF inesperado en la expresión de {contexto}.");
-                return;
-            }
+		// --- MÉTODOS AUXILIARES ---
+		private string GetToken() => (tokenIndex < tokenBuffer.Count) ? tokenBuffer[tokenIndex++] : "EOF";
+		private string PeekToken() => (tokenIndex < tokenBuffer.Count) ? tokenBuffer[tokenIndex] : "EOF";
 
-            // Si el token es el delimitador, la expresión está vacía y es válida (ej. for(;;))
-            if (t == finalDelimiter1 || t == finalDelimiter2)
-            {
-                return;
-            }
+		// Salta tokens de salto de línea (LF)
+		private void SkipLF() { while (PeekToken() == "LF") GetToken(); }
 
-            // Comprobación heurística: asume que si no es un símbolo o palabra clave, es un ID, NUM o CADENA.
-            bool isExpressionStarter =
-                !string.IsNullOrEmpty(t) &&
-                (t.All(c => char.IsLetterOrDigit(c) || c == '_') || t == "cadena" || t == "(" || t == "++" || t == "--");
+		private void MatchToken(string expected)
+		{
+			SkipLF();
+			string token = GetToken();
+			if (token != expected)
+			{
+				N_error++;
+				CajaTexto2.AppendText($"Error Sintáctico: Se esperaba '{expected}', se encontró '{token}'.\n");
+			}
+		}
 
-            if (IsTipoDato(t) && t != "void")
-            {
-                Error($"Error sintáctico: No se puede declarar un tipo de dato ('{t}') dentro de la expresión de {contexto}.");
-                GetToken();
-            }
+		private void Error(string msg) { N_error++; CajaTexto2.AppendText($"Error: {msg}\n"); }
+		private bool IsTipoDato(string t) { return Array.Exists(TiposDeDatos, e => e == t); }
 
-            if (isExpressionStarter)
-            {
-                // Consume la expresión completa, manejando paréntesis anidados
-                int balance = 0;
-                while (PeekToken() != finalDelimiter1 && PeekToken() != (finalDelimiter2 ?? finalDelimiter1) && PeekToken() != "EOF")
-                {
-                    string token = GetToken();
-                    if (token == "(") balance++;
-                    else if (token == ")") balance--;
+		// --- LÓGICA DE ANÁLISIS PRINCIPAL ---
 
-                    if (balance < 0)
-                    {
-                        Error($"Paréntesis desbalanceados en la expresión de {contexto}.");
-                        break;
-                    }
-                }
-                if (balance != 0) Error($"Paréntesis desbalanceados en la expresión de {contexto}.");
-            }
-            else
-            {
-                // ¡ERROR! Se esperaba una expresión pero se encontró un token inesperado (por ejemplo, un operador solo).
-                Error($"Error sintáctico: Se esperaba un valor o inicio de expresión en {contexto}. Se encontró '{t}'.");
+		public void Analisis_Sintactico()
+		{
+			if (tokenBuffer == null || tokenBuffer.Count <= 1) return;
+			CajaTexto2.AppendText("\n--- Iniciando Análisis Sintáctico ---\n");
 
-                // Estrategia de pánico para recuperarse al siguiente separador
-                while (PeekToken() != finalDelimiter1 && PeekToken() != (finalDelimiter2 ?? finalDelimiter1) && PeekToken() != "EOF")
-                {
-                    GetToken();
-                }
-            }
-        }
-        private void ConsumirExpresionEnParentesis(string estructura)
-        {
-            while (PeekToken() == "LF") GetToken();
-            MatchToken("(");
-            AnalizarExpresionSimple($"la condición de {estructura}", ")");
-            MatchToken(")");
-        }
-        // -----------------------------------------------------
-        // MÉTODOS AUXILIARES ESPECÍFICOS PARA FOR (STRICT)
-        // -----------------------------------------------------
-        private void AnalizarCondicionFor()
-        {
-            while (PeekToken() == "LF") GetToken();
-            string contexto = "condición del for";
+			AnalizarPrograma();
 
-            // Si la condición está vacía, es válida (for(; ;))
-            if (PeekToken() == ";") return;
+			if (N_error == 0) CajaTexto2.AppendText("\nAnálisis Sintáctico Exitoso. Estructura Correcta.\n");
+			else CajaTexto2.AppendText($"\nAnálisis finalizado con {N_error} errores.\n");
+		}
 
-            // --- 1. PRIMER OPERANDO (Variable/Valor) ---
-            string t_op1 = PeekToken();
-            if (!t_op1.All(c => char.IsLetterOrDigit(c) || c == '_') && !t_op1.All(char.IsDigit) && t_op1 != "(" && t_op1 != "cadena")
-            {
-                Error($"Error sintáctico: Se esperaba un identificador o valor (ej: 'i') al inicio de la {contexto}. Se encontró '{t_op1}'.");
-                while (PeekToken() != ";" && PeekToken() != "EOF") GetToken();
-                return;
-            }
-            GetToken(); // Consume el primer operando (ej: i)
+		private void AnalizarPrograma()
+		{
+			SkipLF();
+			AnalizarDirectivas();
 
-            // --- 2. OPERADOR RELACIONAL ---
-            while (PeekToken() == "LF") GetToken();
-            string op = PeekToken();
-            if (op == "<" || op == ">" || op == "==" || op == "!=" || op == "<=" || op == ">=")
-            {
-                GetToken(); // Consume el operador (ej: <)
-            }
-            else
-            {
-                Error($"Error sintáctico: Se esperaba un operador relacional ('<', '>', '==', etc.) en la {contexto}. Se encontró '{op}'.");
-                while (PeekToken() != ";" && PeekToken() != "EOF") GetToken();
-                return;
-            }
+			while (PeekToken() != "EOF")
+			{
+				SkipLF();
+				string t = PeekToken();
 
-            // --- 3. SEGUNDO OPERANDO (Valor numérico o Variable) ---
-            while (PeekToken() == "LF") GetToken();
-            string t_op2 = PeekToken();
+				if (IsTipoDato(t))
+				{
+					// Si es "int main", vamos directo a la función main
+					if (t.ToLower() == "int" && PeekNextNoLF() == "main")
+					{
+						AnalizarFuncionMain();
+					}
+					else
+					{
+						// Decidimos si es función o variable mirando si hay un '(' después del ID
+						if (EsDefinicionFuncion())
+							AnalizarDefinicionFuncion();
+						else
+							AnalizarDeclaracion();
+					}
+				}
+				else if (t == "EOF") break;
+				else
+				{
+					Error($"Token inesperado fuera de función: '{t}'");
+					GetToken(); // Evitar bucle infinito
+				}
+				SkipLF();
+			}
+			MatchToken("EOF");
+		}
 
-            // Si el token siguiente es el ';' significa que falta el valor numérico (ej: i < ;)
-            if (t_op2 == ";")
-            {
-                Error($"Error sintáctico: Se esperaba un valor numérico o variable después del operador '{op}' en la {contexto}.");
-                return;
-            }
+		// Mira hacia adelante saltando los LF para ver si sigue un '('
+		private bool EsDefinicionFuncion()
+		{
+			int tempIndex = tokenIndex + 1; // Saltamos el Tipo
+			while (tempIndex < tokenBuffer.Count && tokenBuffer[tempIndex] == "LF") tempIndex++;
+			tempIndex++; // Saltamos el Identificador
+			while (tempIndex < tokenBuffer.Count && tokenBuffer[tempIndex] == "LF") tempIndex++;
 
-            // Verificamos que el segundo operando sea un ID o un número
-            if (!t_op2.All(c => char.IsLetterOrDigit(c) || c == '_') && !t_op2.All(char.IsDigit) && t_op2 != "(" && t_op2 != "cadena")
-            {
-                Error($"Error sintáctico: Se esperaba un valor numérico o variable después del operador en la {contexto}. Se encontró '{t_op2}'.");
-                while (PeekToken() != ";" && PeekToken() != "EOF") GetToken();
-                return;
-            }
+			return tempIndex < tokenBuffer.Count && tokenBuffer[tempIndex] == "(";
+		}
 
-            // 4. Consumir el resto de la expresión hasta el ';' (por si hay más operadores lógicos &&, ||)
-            AnalizarExpresionSimple(contexto, ";");
-        }
-        private void AnalizarIncrementoFor()
-        {
-            while (PeekToken() == "LF") GetToken();
-            string contexto = "incremento del for";
+		private string PeekNextNoLF()
+		{
+			int tempIndex = tokenIndex + 1;
+			while (tempIndex < tokenBuffer.Count && tokenBuffer[tempIndex] == "LF") tempIndex++;
+			return (tempIndex < tokenBuffer.Count) ? tokenBuffer[tempIndex] : "EOF";
+		}
 
-            // Si el incremento está vacío, es válido (for(;;))
-            if (PeekToken() == ")") return;
+		private void AnalizarDirectivas()
+		{
+			while (PeekToken() == "#")
+			{
+				MatchToken("#");
+				string includeToken = GetToken();
+				if (includeToken == "include")
+				{
+					MatchToken("<");
+					GetToken(); // Nombre del archivo
+					MatchToken(">");
+				}
+				else Error($"Directiva no reconocida: {includeToken}");
+				SkipLF();
+			}
+		}
 
-            // --- 1. PRIMER OPERANDO (Variable) ---
-            string t_op1 = PeekToken();
-            if (!t_op1.All(c => char.IsLetterOrDigit(c) || c == '_') && !t_op1.All(char.IsDigit) && t_op1 != "(")
-            {
-                Error($"Error sintáctico: El {contexto} debe comenzar con un identificador o valor. Se encontró '{t_op1}'.");
-                while (PeekToken() != ")" && PeekToken() != "EOF") GetToken();
-                return;
-            }
-            GetToken(); // Consume el primer operando (ej: i)
+		// --- DEFINICIÓN DE FUNCIONES (BASADO EN TU DIAGRAMA) ---
 
-            // --- 2. OPERADOR DE INCREMENTO/ASIGNACIÓN ---
-            while (PeekToken() == "LF") GetToken();
-            string op = PeekToken();
-            if (op == "=" || op == "++" || op == "--" || op == "+" || op == "-" || op == "*" || op == "/")
-            {
-                GetToken(); // Consume el operador (ej: +)
-            }
-            else
-            {
-                Error($"Error sintáctico: Se esperaba un operador de asignación o incremento ('=', '++', '+', etc.) en el {contexto}. Se encontró '{op}'.");
-                while (PeekToken() != ")" && PeekToken() != "EOF") GetToken();
-                return;
-            }
+		private void AnalizarDefinicionFuncion()
+		{
+			SkipLF();
+			string tipo = GetToken(); // Consume Tipo
+			string nombre = GetToken(); // Consume Identificador
 
-            // --- 3. SEGUNDO OPERANDO (Valor numérico o Variable) ---
-            // Solo se requiere si el operador NO es unario (++, --)
-            if (op != "++" && op != "--")
-            {
-                while (PeekToken() == "LF") GetToken();
-                string t_op2 = PeekToken();
+			MatchToken("(");
 
-                // Si el token siguiente es el ')' significa que falta el valor numérico (ej: i + )
-                if (t_op2 == ")")
-                {
-                    Error($"Error sintáctico: Se esperaba un valor numérico o variable después del operador '{op}' en el {contexto}.");
-                    return;
-                }
+			// Si el siguiente token es un tipo, hay parámetros
+			if (IsTipoDato(PeekToken()))
+			{
+				AnalizarParametros();
+			}
 
-                if (!t_op2.All(c => char.IsLetterOrDigit(c) || c == '_') && !t_op2.All(char.IsDigit) && t_op2 != "(")
-                {
-                    Error($"Error sintáctico: Se esperaba un identificador o valor después del operador en el {contexto}. Se encontró '{t_op2}'.");
-                    while (PeekToken() != ")" && PeekToken() != "EOF") GetToken();
-                    return;
-                }
-            }
+			MatchToken(")");
+			AnalizarBloque(); // Bloque de sentencias
+		}
 
-            // 4. Consumir el resto de la expresión hasta el ')'
-            AnalizarExpresionSimple(contexto, ")");
-        }
-        // --- INICIO DEL ANÁLISIS ---
-        public void Analisis_Sintactico()
-        {
-            if (tokenBuffer == null || tokenBuffer.Count <= 1) return;
-            CajaTexto2.AppendText("\n--- Iniciando Análisis Sintáctico ---\n");
+		private void AnalizarParametros()
+		{
+			// Parámetro inicial: Tipo + Identificador
+			GetToken(); // Tipo
+			GetToken(); // ID
 
-            AnalizarPrograma();
+			// Bucle para comas (el camino de retorno en tu diagrama)
+			while (PeekToken() == ",")
+			{
+				MatchToken(",");
+				if (IsTipoDato(PeekToken()))
+				{
+					GetToken(); // Tipo
+					GetToken(); // ID
+				}
+				else Error("Se esperaba tipo de dato después de ',' en parámetros.");
+			}
+		}
 
-            if (N_error == 0) CajaTexto2.AppendText("\nAnálisis Sintáctico Exitoso. Estructura Correcta.\n");
-            else CajaTexto2.AppendText($"\nAnálisis finalizado con {N_error} errores.\n");
-        }
-        private void AnalizarPrograma()
-        {
-            while (PeekToken() == "LF") GetToken();
-            AnalizarDirectivas();
+		private void AnalizarFuncionMain()
+		{
+			SkipLF();
+			MatchToken("int");
+			MatchToken("main");
+			MatchToken("(");
+			MatchToken(")");
+			AnalizarBloque();
+		}
 
-            while (IsTipoDato(PeekToken()))
-            {
-                if (PeekToken() == "int" && PeekNextToken() == "main") break;
-                while (PeekToken() == "LF") GetToken();
-                AnalizarDeclaracion();
-                while (PeekToken() == "LF") GetToken();
-            }
+		private void AnalizarBloque()
+		{
+			SkipLF();
+			MatchToken("{");
+			while (PeekToken() != "}" && PeekToken() != "EOF")
+			{
+				AnalizarSentencia();
+				SkipLF();
+			}
+			MatchToken("}");
+		}
 
-            AnalizarFuncionMain();
-            while (PeekToken() == "LF") GetToken();
-            MatchToken("EOF");
-        }
-        private void AnalizarDirectivas()
-        {
-            while (PeekToken() == "LF") GetToken();
-            while (PeekToken() == "#")
-            {
-                MatchToken("#");
-                string includeToken = GetToken();
-                if (includeToken == "include")
-                {
-                    MatchToken("<");
-                    GetToken();
-                    MatchToken(">");
-                }
-                else Error($"Directiva no reconocida después de '#': {includeToken}");
-                while (PeekToken() == "LF") GetToken();
-            }
-        }
-        private void AnalizarFuncionMain()
-        {
-            while (PeekToken() == "LF") GetToken();
-            MatchToken("int");
-            MatchToken("main");
-            MatchToken("(");
-            MatchToken(")");
-            AnalizarBloque();
-        }
-        private void AnalizarBloque()
-        {
-            while (PeekToken() == "LF") GetToken();
-            MatchToken("{");
-            while (PeekToken() != "}" && PeekToken() != "EOF")
-            {
-                AnalizarSentencia();
-            }
-            MatchToken("}");
-            while (PeekToken() == "LF") GetToken();
-        }
-        private void AnalizarSentencia()
-        {
-            while (PeekToken() == "LF") GetToken();
-            string t = PeekToken();
+		// --- SENTENCIAS Y EXPRESIONES ---
 
-            if (t == "}" || t == "EOF") return;
+		private void AnalizarSentencia()
+		{
+			SkipLF();
+			string t = PeekToken();
 
-            if (IsTipoDato(t)) AnalizarDeclaracion();
-            else if (t == "if") AnalizarIf();
-            else if (t == "while") AnalizarWhile();
-            else if (t == "do") AnalizarDoWhile();
-            else if (t == "for") AnalizarFor();
-            else if (t == "switch") AnalizarSwitch();
-            else if (t == "return")
-            {
-                MatchToken("return");
-                AnalizarExpresionSimple("sentencia return", ";");
-                MatchToken(";");
-                while (PeekToken() == "LF") GetToken();
-            }
-            else if (t == "printf")
-            {
-                MatchToken("printf"); MatchToken("(");
-                AnalizarExpresionSimple("argumentos de printf", ")");
-                MatchToken(")");
-                MatchToken(";");
-                while (PeekToken() == "LF") GetToken();
-            }
-            else
-            {
-                // Asignación, Llamada, Incremento/Decremento
+			if (t == "}" || t == "EOF") return;
 
-                GetToken(); // Consume ID
+			if (IsTipoDato(t)) AnalizarDeclaracion();
+			else if (t == "if") AnalizarIf();
+			else if (t == "while") AnalizarWhile();
+			else if (t == "do") AnalizarDoWhile();
+			else if (t == "for") AnalizarFor();
+			else if (t == "switch") AnalizarSwitch();
+			else if (t == "return" || t == "Return")
+			{
+				GetToken();
+				AnalizarExpresionSimple("sentencia return", ";");
+				MatchToken(";");
+			}
+			else if (t == "printf")
+			{
+				MatchToken("printf"); MatchToken("(");
+				AnalizarExpresionSimple("argumentos de printf", ")");
+				MatchToken(")");
+				MatchToken(";");
+			}
+			else
+			{
+				// Asignación o Llamada
+				string id = GetToken();
+				string next = PeekToken();
 
-                while (PeekToken() == "[")
-                {
-                    MatchToken("[");
-                    AnalizarExpresionSimple("índice de array", "]");
-                    MatchToken("]");
-                }
+				if (next == "=")
+				{
+					MatchToken("=");
+					AnalizarExpresionSimple("asignación", ";");
+					MatchToken(";");
+				}
+				else if (next == "(")
+				{
+					MatchToken("(");
+					AnalizarExpresionSimple("argumentos de función", ")");
+					MatchToken(")");
+					MatchToken(";");
+				}
+				else if (next == "++" || next == "--")
+				{
+					GetToken(); MatchToken(";");
+				}
+				else
+				{
+					Error($"Sentencia no reconocida: {id}");
+					while (PeekToken() != ";" && PeekToken() != "LF" && PeekToken() != "EOF") GetToken();
+					if (PeekToken() == ";") GetToken();
+				}
+			}
+		}
 
-                string next = PeekToken();
+		private void AnalizarDeclaracion()
+		{
+			SkipLF();
+			GetToken(); // Tipo
+			GetToken(); // ID
 
-                if (next == "=")
-                {
-                    MatchToken("=");
-                    AnalizarExpresionSimple("asignación", ";");
-                    MatchToken(";");
-                    while (PeekToken() == "LF") GetToken();
-                }
-                else if (next == "++" || next == "--")
-                {
-                    GetToken();
-                    MatchToken(";");
-                    while (PeekToken() == "LF") GetToken();
-                }
-                else if (next == "(") // Llamada a función
-                {
-                    MatchToken("(");
-                    AnalizarExpresionSimple("argumentos de función", ")");
-                    MatchToken(")");
-                    MatchToken(";");
-                    while (PeekToken() == "LF") GetToken();
-                }
-                else
-                {
-                    Error($"Sentencia inválida: Se esperaba '=', '++', '--', o '(' después de '{t}'.");
-                    while (PeekToken() != ";" && PeekToken() != "LF" && PeekToken() != "EOF") GetToken();
-                    if (PeekToken() == ";") MatchToken(";");
-                    while (PeekToken() == "LF") GetToken();
-                }
-            }
-        }
-        private void AnalizarDeclaracion()
-        {
-            while (PeekToken() == "LF") GetToken();
-            GetToken(); // Consume Tipo
-            GetToken(); // Consume ID
+			while (PeekToken() == "[")
+			{
+				MatchToken("[");
+				AnalizarExpresionSimple("tamaño array", "]");
+				MatchToken("]");
+			}
 
-            while (PeekToken() == "[")
-            {
-                MatchToken("[");
-                AnalizarExpresionSimple("tamaño de array", "]");
-                MatchToken("]");
-            }
+			if (PeekToken() == "=")
+			{
+				MatchToken("=");
+				AnalizarExpresionSimple("inicialización", ";");
+			}
 
-            if (PeekToken() == "=")
-            {
-                MatchToken("=");
+			MatchToken(";");
+		}
 
-                // Consumir el valor de inicialización (puede incluir llaves para arrays)
-                int braces = 0;
-                while (true)
-                {
-                    string next = PeekToken();
-                    if (next == ";" && braces == 0) break;
-                    if (next == "EOF") { Error("EOF inesperado en inicialización de declaración."); break; }
-                    if (next == "{") braces++;
-                    if (next == "}") braces--;
-                    GetToken();
-                }
-                if (braces != 0) Error("Llaves desbalanceadas en la inicialización de la variable.");
-            }
+		// --- MÉTODOS DE EXPRESIÓN Y CONTROL (Mantenidos de tu código original) ---
 
-            MatchToken(";");
-            if (PeekToken() == "LF") MatchToken("LF");
-        }
-        // --- ESTRUCTURAS DE CONTROL ---
-        private void AnalizarFor()
-        {
-            while (PeekToken() == "LF") GetToken();
-            MatchToken("for");
-            MatchToken("(");
+		private void AnalizarExpresionSimple(string contexto, string finalDelimiter1, string finalDelimiter2 = null)
+		{
+			SkipLF();
+			string t = PeekToken();
+			if (t == finalDelimiter1 || t == finalDelimiter2 || t == "EOF") return;
 
-            // 1. Inicialización (Sintaxis estricta: Asignación/Declaración)
-            while (PeekToken() == "LF") GetToken();
-            if (PeekToken() != ";")
-            {
-                string initialToken = GetToken();
-                string nextToken = PeekToken();
+			int balance = 0;
+			while (PeekToken() != "EOF")
+			{
+				string token = PeekToken();
+				if (balance == 0 && (token == finalDelimiter1 || (finalDelimiter2 != null && token == finalDelimiter2))) break;
 
-                if (nextToken == "=" || IsTipoDato(initialToken))
-                {
-                    if (nextToken == "=") MatchToken("=");
-                    AnalizarExpresionSimple("inicialización del for", ";");
-                }
-                else if (initialToken.All(c => char.IsLetterOrDigit(c) || c == '_') && (nextToken == "++" || nextToken == "--"))
-                {
-                    GetToken();
-                    AnalizarExpresionSimple("inicialización del for", ";");
-                }
-                else
-                {
-                    Error($"Error sintáctico: Se esperaba un operador de asignación ('='), '++'/'--', o una declaración en la inicialización del bucle 'for'. Se encontró '{initialToken}' seguido de '{nextToken}'.");
-                    while (PeekToken() != ";" && PeekToken() != "EOF") GetToken();
-                }
-            }
-            MatchToken(";");
+				token = GetToken();
+				if (token == "(") balance++;
+				else if (token == ")") balance--;
 
-            // 2. Condición (Usa el método estricto)
-            AnalizarCondicionFor();
-            MatchToken(";");
+				if (balance < 0) { Error($"Paréntesis desbalanceados en {contexto}"); break; }
+			}
+		}
 
-            // 3. Incremento/Decremento (Usa el método estricto)
-            AnalizarIncrementoFor();
-            MatchToken(")");
+		private void ConsumirExpresionEnParentesis(string estructura)
+		{
+			MatchToken("(");
+			AnalizarExpresionSimple($"condición de {estructura}", ")");
+			MatchToken(")");
+		}
 
-            AnalizarBloque();
-        }
-        private void AnalizarIf()
-        {
-            while (PeekToken() == "LF") GetToken();
-            MatchToken("if");
-            ConsumirExpresionEnParentesis("if");
-            AnalizarBloque();
-            if (PeekToken() == "else")
-            {
-                while (PeekToken() == "LF") GetToken();
-                MatchToken("else");
-                AnalizarBloque();
-            }
-        }
-        private void AnalizarWhile()
-        {
-            while (PeekToken() == "LF") GetToken();
-            MatchToken("while");
-            ConsumirExpresionEnParentesis("while");
-            AnalizarBloque();
-        }
-        private void AnalizarSwitch()
-        {
-            while (PeekToken() == "LF") GetToken();
-            MatchToken("switch");
-            ConsumirExpresionEnParentesis("switch");
+		private void AnalizarIf() { MatchToken("if"); ConsumirExpresionEnParentesis("if"); AnalizarBloque(); if (PeekToken() == "else") { GetToken(); AnalizarBloque(); } }
+		private void AnalizarWhile() { MatchToken("while"); ConsumirExpresionEnParentesis("while"); AnalizarBloque(); }
+		private void AnalizarDoWhile() { MatchToken("do"); AnalizarBloque(); MatchToken("while"); ConsumirExpresionEnParentesis("do-while"); MatchToken(";"); }
 
-            while (PeekToken() == "LF") GetToken();
-            MatchToken("{");
+		private void AnalizarFor()
+		{
+			MatchToken("for");
+			MatchToken("(");
+			if (PeekToken() != ";") AnalizarSentencia(); else MatchToken(";");
+			AnalizarExpresionSimple("condición for", ";"); MatchToken(";");
+			AnalizarExpresionSimple("incremento for", ")"); MatchToken(")");
+			AnalizarBloque();
+		}
 
-            bool defaultFound = false;
-
-            while (PeekToken() != "}" && PeekToken() != "EOF")
-            {
-                while (PeekToken() == "LF") GetToken();
-
-                if (PeekToken() == "case")
-                {
-                    MatchToken("case");
-                    AnalizarExpresionSimple("valor de case", ":");
-                    MatchToken(":");
-                    while (PeekToken() == "LF") GetToken();
-
-                    while (PeekToken() != "case" && PeekToken() != "default" && PeekToken() != "}" && PeekToken() != "EOF")
-                    {
-                        if (PeekToken() == "break") { MatchToken("break"); MatchToken(";"); }
-                        else AnalizarSentencia();
-                        while (PeekToken() == "LF") GetToken();
-                    }
-                }
-                else if (PeekToken() == "default")
-                {
-                    if (defaultFound) Error("Declaración 'default' duplicada en el switch.");
-                    defaultFound = true;
-                    MatchToken("default");
-                    MatchToken(":");
-                    while (PeekToken() == "LF") GetToken();
-
-                    while (PeekToken() != "}" && PeekToken() != "EOF")
-                    {
-                        if (PeekToken() == "break") { MatchToken("break"); MatchToken(";"); }
-                        else AnalizarSentencia();
-                        while (PeekToken() == "LF") GetToken();
-                    }
-                }
-                else
-                {
-                    Error($"Se esperaba 'case' o 'default', se encontró '{PeekToken()}' dentro de switch.");
-                    GetToken();
-                }
-            }
-            MatchToken("}");
-            while (PeekToken() == "LF") GetToken();
-        }
-        private void AnalizarDoWhile()
-        {
-            while (PeekToken() == "LF") GetToken();
-            MatchToken("do");
-            AnalizarBloque();
-
-            while (PeekToken() == "LF") GetToken();
-            MatchToken("while");
-            ConsumirExpresionEnParentesis("do-while");
-
-            MatchToken(";");
-            if (PeekToken() == "LF") MatchToken("LF");
-        }
-    }
+		private void AnalizarSwitch()
+		{
+			MatchToken("switch");
+			ConsumirExpresionEnParentesis("switch");
+			MatchToken("{");
+			while (PeekToken() != "}" && PeekToken() != "EOF")
+			{
+				if (PeekToken() == "case") { MatchToken("case"); AnalizarExpresionSimple("valor case", ":"); MatchToken(":"); }
+				else if (PeekToken() == "default") { MatchToken("default"); MatchToken(":"); }
+				else if (PeekToken() == "break") { MatchToken("break"); MatchToken(";"); }
+				else AnalizarSentencia();
+				SkipLF();
+			}
+			MatchToken("}");
+		}
+	}
 }
