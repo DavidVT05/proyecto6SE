@@ -43,12 +43,10 @@ namespace Editor_de_texto.Clases
                 tokenBuffer = new List<string>() { "EOF" };
             }
         }
-
         // --- MÉTODOS AUXILIARES ---
         private string GetToken() => (tokenIndex < tokenBuffer.Count) ? tokenBuffer[tokenIndex++] : "EOF";
         private string PeekToken() => (tokenIndex < tokenBuffer.Count) ? tokenBuffer[tokenIndex] : "EOF";
         private string PeekNextToken() => (tokenIndex + 1 < tokenBuffer.Count) ? tokenBuffer[tokenIndex + 1] : "EOF";
-
         private void MatchToken(string expected)
         {
             string token = GetToken();
@@ -60,12 +58,9 @@ namespace Editor_de_texto.Clases
                 if (PeekToken() == expected) GetToken();
             }
         }
-
         private void Error(string msg) { N_error++; CajaTexto2.AppendText($"Error: {msg}\n"); }
         private bool IsTipoDato(string t) { return Array.Exists(TiposDeDatos, e => e == t); }
-
         // MÉTODOS DE EXPRESIÓN
-
         // Función para consumir y validar una expresión simple hasta un separador (';', ')')
         private void AnalizarExpresionSimple(string contexto, string finalDelimiter1, string finalDelimiter2 = null)
         {
@@ -124,7 +119,6 @@ namespace Editor_de_texto.Clases
                 }
             }
         }
-
         private void ConsumirExpresionEnParentesis(string estructura)
         {
             while (PeekToken() == "LF") GetToken();
@@ -132,11 +126,9 @@ namespace Editor_de_texto.Clases
             AnalizarExpresionSimple($"la condición de {estructura}", ")");
             MatchToken(")");
         }
-
         // -----------------------------------------------------
-        // 💡 MÉTODOS AUXILIARES ESPECÍFICOS PARA FOR (STRICT)
+        // MÉTODOS AUXILIARES ESPECÍFICOS PARA FOR (STRICT)
         // -----------------------------------------------------
-
         private void AnalizarCondicionFor()
         {
             while (PeekToken() == "LF") GetToken();
@@ -191,8 +183,6 @@ namespace Editor_de_texto.Clases
             // 4. Consumir el resto de la expresión hasta el ';' (por si hay más operadores lógicos &&, ||)
             AnalizarExpresionSimple(contexto, ";");
         }
-
-
         private void AnalizarIncrementoFor()
         {
             while (PeekToken() == "LF") GetToken();
@@ -250,8 +240,6 @@ namespace Editor_de_texto.Clases
             // 4. Consumir el resto de la expresión hasta el ')'
             AnalizarExpresionSimple(contexto, ")");
         }
-
-
         // --- INICIO DEL ANÁLISIS ---
         public void Analisis_Sintactico()
         {
@@ -263,7 +251,6 @@ namespace Editor_de_texto.Clases
             if (N_error == 0) CajaTexto2.AppendText("\nAnálisis Sintáctico Exitoso. Estructura Correcta.\n");
             else CajaTexto2.AppendText($"\nAnálisis finalizado con {N_error} errores.\n");
         }
-
         private void AnalizarPrograma()
         {
             while (PeekToken() == "LF") GetToken();
@@ -281,7 +268,6 @@ namespace Editor_de_texto.Clases
             while (PeekToken() == "LF") GetToken();
             MatchToken("EOF");
         }
-
         private void AnalizarDirectivas()
         {
             while (PeekToken() == "LF") GetToken();
@@ -299,7 +285,6 @@ namespace Editor_de_texto.Clases
                 while (PeekToken() == "LF") GetToken();
             }
         }
-
         private void AnalizarFuncionMain()
         {
             while (PeekToken() == "LF") GetToken();
@@ -309,7 +294,6 @@ namespace Editor_de_texto.Clases
             MatchToken(")");
             AnalizarBloque();
         }
-
         private void AnalizarBloque()
         {
             while (PeekToken() == "LF") GetToken();
@@ -321,7 +305,6 @@ namespace Editor_de_texto.Clases
             MatchToken("}");
             while (PeekToken() == "LF") GetToken();
         }
-
         private void AnalizarSentencia()
         {
             while (PeekToken() == "LF") GetToken();
@@ -395,7 +378,6 @@ namespace Editor_de_texto.Clases
                 }
             }
         }
-
         private void AnalizarDeclaracion()
         {
             while (PeekToken() == "LF") GetToken();
@@ -430,9 +412,7 @@ namespace Editor_de_texto.Clases
             MatchToken(";");
             if (PeekToken() == "LF") MatchToken("LF");
         }
-
         // --- ESTRUCTURAS DE CONTROL ---
-
         private void AnalizarFor()
         {
             while (PeekToken() == "LF") GetToken();
@@ -474,7 +454,6 @@ namespace Editor_de_texto.Clases
 
             AnalizarBloque();
         }
-
         private void AnalizarIf()
         {
             while (PeekToken() == "LF") GetToken();
@@ -488,7 +467,6 @@ namespace Editor_de_texto.Clases
                 AnalizarBloque();
             }
         }
-
         private void AnalizarWhile()
         {
             while (PeekToken() == "LF") GetToken();
@@ -496,7 +474,6 @@ namespace Editor_de_texto.Clases
             ConsumirExpresionEnParentesis("while");
             AnalizarBloque();
         }
-
         private void AnalizarSwitch()
         {
             while (PeekToken() == "LF") GetToken();
@@ -550,7 +527,6 @@ namespace Editor_de_texto.Clases
             MatchToken("}");
             while (PeekToken() == "LF") GetToken();
         }
-
         private void AnalizarDoWhile()
         {
             while (PeekToken() == "LF") GetToken();

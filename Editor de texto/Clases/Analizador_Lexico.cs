@@ -12,10 +12,8 @@ namespace Editor_de_texto.Clases
         private StreamWriter Escribir;
         private RichTextBox CajaTexto2;
         private bool inBlockComment = false;
-
         public int Numero_linea { get; set; }
         public int N_error { get; private set; }
-
         public Analizador_Lexico(StreamWriter escribir, RichTextBox caja, int numLinea = 0, int nError = 0)
         {
             Escribir = escribir;
@@ -23,7 +21,6 @@ namespace Editor_de_texto.Clases
             Numero_linea = numLinea;
             N_error = nError;
         }
-
         public void Analisis_Lexico(string linea)
         {
             Numero_linea++;
