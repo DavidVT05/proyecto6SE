@@ -93,79 +93,74 @@ namespace Editor_de_texto
         }
         private void compilarSolucionToolStripMenuItem1_Click(object sender, EventArgs e)
         {
-            // 1. Validaciones iniciales
-            if (string.IsNullOrEmpty(archivo))
-            {
-                MessageBox.Show("Debe abrir un archivo primero.");
-                return;
-            }
+			// Validación de archivo abierto
+			if (string.IsNullOrEmpty(archivo))
+			{
+				MessageBox.Show("Por favor, abra un archivo .c para compilar.", "Archivo faltante");
+				return;
+			}
 
-            // 2. Preparar interfaz y guardar cambios
-            CajaTexto2.Text = "";
-            guardar();
+			CajaTexto2.Clear();
+			guardar(); // Guardamos cambios en el editor
+			archivoback = Path.ChangeExtension(archivo, ".back");
+			int numErroresLexicos = 0;
 
-            // 3. Definir ruta del archivo intermedio (.back)
-            archivoback = Path.ChangeExtension(archivo, ".back");
+			// --- PASO 1: ANÁLISIS LÉXICO ---
+			try
+			{
+				using (StreamReader sr = new StreamReader(archivo))
+				using (StreamWriter sw = new StreamWriter(archivoback, false, Encoding.UTF8))
+				{
+					var lexico = new Analizador_Lexico(sw, CajaTexto2, 0, 0);
+					string linea;
+					int contadorLineas = 0;
 
-            // Variable local para contar errores léxicos
-            int erroresLexicos = 0;
+					while ((linea = sr.ReadLine()) != null)
+					{
+						lexico.Numero_linea = ++contadorLineas;
+						lexico.Analisis_Lexico(linea);
+					}
+					numErroresLexicos = lexico.N_error;
+				}
+			}
+			catch (Exception ex)
+			{
+				MessageBox.Show("Error en fase léxica: " + ex.Message);
+				return;
+			}
 
-            // 4. EJECUTAR ANÁLISIS LÉXICO
-            // El 'using' asegura que el archivo se cierre antes de pasar al sintáctico
-            using (Leer = new StreamReader(archivo))
-            using (Escribir = new StreamWriter(archivoback, false, Encoding.UTF8))
-            {
-                // Instanciamos el léxico
-                var analizadorLexico = new Analizador_Lexico(Escribir, CajaTexto2, 0, 0);
+			// Detener si el léxico falló
+			if (numErroresLexicos > 0)
+			{
+				CajaTexto2.AppendText("\n[!] Error: Se detuvo la compilación por errores léxicos.");
+				return;
+			}
 
-                int numero_linea_local = 0;
-                string linea;
+			// --- PASO 2: ANÁLISIS SINTÁCTICO Y SEMÁNTICO ---
+			try
+			{
+				Analizador_Sintactico sintaxis = new Analizador_Sintactico(archivoback, CajaTexto2);
+				sintaxis.Analisis_Sintactico();
 
-                // Leemos línea por línea
-                while ((linea = Leer.ReadLine()) != null)
-                {
-                    numero_linea_local++;
-                    analizadorLexico.Numero_linea = numero_linea_local;
-                    analizadorLexico.Analisis_Lexico(linea);
-                }
+				// Generación de archivo CSV según instrucciones de clase
+				sintaxis.ExportarTablasCSV(archivo);
 
-                // Recuperamos la cantidad de errores encontrados
-                erroresLexicos = analizadorLexico.N_error;
-            }
+				if (sintaxis.N_error == 0)
+				{
+					MessageBox.Show("¡Proceso Terminado!\nArchivo .csv generado con éxito.", "Compilación Exitosa",
+									MessageBoxButtons.OK, MessageBoxIcon.Information);
+				}
+				else
+				{
+					MessageBox.Show($"Se encontraron {sintaxis.N_error} errores sintácticos/semánticos.", "Revisar código");
+				}
+			}
+			catch (Exception ex)
+			{
+				CajaTexto2.AppendText("\nError inesperado: " + ex.Message);
+			}
 
-            CajaTexto2.AppendText($"\n--- Fin Análisis Léxico. Errores: {erroresLexicos} ---\n");
-
-            // 5. DECISIÓN: ¿Pasamos al Sintáctico?
-            if (erroresLexicos > 0)
-            {
-                CajaTexto2.AppendText("\nNo se puede continuar con el análisis sintáctico debido a errores léxicos.\n");
-                MessageBox.Show($"Se encontraron {erroresLexicos} errores léxicos. Corríjalos para continuar.", "Error de Compilación", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                return; // Detenemos la ejecución aquí
-            }
-
-            // 6. EJECUTAR ANÁLISIS SINTÁCTICO
-            // (Solo llegamos aquí si el léxico fue exitoso)
-            try
-            {
-                Analizador_Sintactico sintactico = new Analizador_Sintactico(archivoback, CajaTexto2);
-                sintactico.Analisis_Sintactico();
-
-                // 7. RESULTADO FINAL
-                if (sintactico.N_error == 0)
-                {
-                    MessageBox.Show("¡Compilación Exitosa! El programa no contiene errores.", "Compilación", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                }
-                else
-                {
-                    MessageBox.Show($"Se encontraron {sintactico.N_error} errores sintácticos.", "Errores de Sintaxis", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                }
-            }
-            catch (Exception ex)
-            {
-                CajaTexto2.AppendText($"\nError crítico al ejecutar el analizador sintáctico: {ex.Message}\n");
-            }
-
-        }
+		}
         private void traducirToolStripMenuItem_Click(object sender, EventArgs e)
         {
             if (string.IsNullOrEmpty(archivo) || !File.Exists(archivo))
