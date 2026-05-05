@@ -9,11 +9,13 @@ namespace Editor_de_texto.Clases
 {
 	public class Analizador_Sintactico
 	{
+		// --- CLASES DE APOYO ---
 		public class Variable
 		{
 			public string Nombre { get; set; }
 			public string Tipo { get; set; }
 			public string Origen { get; set; }
+			public double ValorNum { get; set; } // Guarda el valor real para cálculos
 		}
 
 		public class Funcion
@@ -24,48 +26,64 @@ namespace Editor_de_texto.Clases
 			public string Parametros { get; set; }
 		}
 
+		public class NodoExpresion
+		{
+			public string Valor { get; set; }
+			public NodoExpresion Izquierdo { get; set; }
+			public NodoExpresion Derecho { get; set; }
+			public NodoExpresion(string valor)
+			{
+				Valor = valor;
+				Izquierdo = null;
+				Derecho = null;
+			}
+		}
+
+		// --- VARIABLES DE CONTROL ---
 		private List<Variable> TablaVariables = new List<Variable>();
 		private List<Funcion> TablaFunciones = new List<Funcion>();
-
 		private List<string> tokenBuffer;
 		private int tokenIndex;
 		private RichTextBox CajaTexto2;
 		private string ambitoActual = "global";
-		private string tipoFuncionActual = "";
 		public int N_error { get; private set; }
 
-		private readonly string[] TiposDeDatos = { "int", "float", "char", "void", "double", "Int", "Float" };
+		private NodoExpresion UltimoArbolGenerado = null;
+		private double ResultadoExpresion = 0;
+
+		private readonly string[] TiposDeDatos = { "int", "float", "char", "void", "double" };
 
 		public Analizador_Sintactico(string archivoIntermedio, RichTextBox caja)
 		{
 			CajaTexto2 = caja;
 			tokenIndex = 0;
 			tokenBuffer = new List<string>();
-
 			try
 			{
 				if (File.Exists(archivoIntermedio))
 				{
 					tokenBuffer.AddRange(File.ReadAllLines(archivoIntermedio)
-						.Select(l => l.Trim())
-						.Where(l => !string.IsNullOrEmpty(l)));
+								.Select(l => l.Trim())
+								.Where(l => !string.IsNullOrEmpty(l)));
 				}
 				tokenBuffer.Add("EOF");
 			}
 			catch { tokenBuffer.Add("EOF"); }
 		}
 
+		// --- FLUJO PRINCIPAL ---
 		public void Analisis_Sintactico()
 		{
-			CajaTexto2.AppendText("\n--- Iniciando Fase Sintáctica y Semántica ---\n");
+			CajaTexto2.Clear();
+			CajaTexto2.AppendText("--- Iniciando Fase Sintáctica y Semántica ---\n");
 			TablaVariables.Clear();
 			TablaFunciones.Clear();
+			UltimoArbolGenerado = null;
 			ambitoActual = "global";
 			N_error = 0;
 			tokenIndex = 0;
 
 			ProcesarEstructuraBase();
-
 			if (N_error == 0) MostrarResultadosEnPantalla();
 		}
 
@@ -77,7 +95,6 @@ namespace Editor_de_texto.Clases
 				Match("#"); Match("include"); Match("<"); GetToken(); Match(">");
 				SkipLF();
 			}
-
 			while (PeekToken() != "EOF")
 			{
 				SkipLF();
@@ -100,65 +117,53 @@ namespace Editor_de_texto.Clases
 		{
 			string tipo = GetToken();
 			string nombre = GetToken();
+			Variable nuevaVar = null;
 
 			if (TablaVariables.Exists(v => v.Nombre == nombre && v.Origen == ambitoActual))
 			{
-				Error($"Error Semántico: La variable '{nombre}' ya fue declarada en {ambitoActual}.");
+				Error($"Error Semántico: La variable '{nombre}' ya existe en {ambitoActual}.");
 			}
 			else
 			{
-				TablaVariables.Add(new Variable { Nombre = nombre, Tipo = tipo, Origen = ambitoActual });
+				nuevaVar = new Variable { Nombre = nombre, Tipo = tipo, Origen = ambitoActual, ValorNum = 0 };
+				TablaVariables.Add(nuevaVar);
 			}
 
 			if (PeekToken() == "=")
 			{
 				Match("=");
-				if (tipo.ToLower() == "int" && PeekToken().Contains("."))
-					Error($"Error Semántico: Intento de asignar decimal a variable entera '{nombre}'.");
-
-				// NUEVO: Validamos matemáticamente la expresión hasta encontrar el ';'
-				ValidarExpresion(";");
+				NodoExpresion exp = AnalizarExpresion(";");
+				if (nuevaVar != null) nuevaVar.ValorNum = EvaluarArbol(exp);
 			}
 			Match(";");
 		}
 
 		private void ProcesarFuncion()
 		{
-			tipoFuncionActual = GetToken();
+			string tipoRet = GetToken();
 			string nombre = GetToken();
-			string ambitoAnterior = ambitoActual;
+			string anterior = ambitoActual;
 			ambitoActual = nombre;
 
 			Match("(");
 			int countParams = 0;
-			string detalleParams = "";
-
+			string detalle = "";
 			if (IsTipoDato(PeekToken()))
 			{
 				do
 				{
 					if (PeekToken() == ",") Match(",");
-					string pTipo = GetToken();
-					string pNom = GetToken();
-
-					detalleParams += (countParams > 0 ? ", " : "") + $"{pTipo} {pNom}";
-					TablaVariables.Add(new Variable { Nombre = pNom, Tipo = pTipo, Origen = nombre });
+					string pT = GetToken(); string pN = GetToken();
+					detalle += (countParams > 0 ? ", " : "") + $"{pT} {pN}";
+					TablaVariables.Add(new Variable { Nombre = pN, Tipo = pT, Origen = nombre, ValorNum = 0 });
 					countParams++;
 				} while (PeekToken() == ",");
 			}
 			Match(")");
 
-			TablaFunciones.Add(new Funcion
-			{
-				TipoRetorno = tipoFuncionActual,
-				Nombre = nombre,
-				NumParametros = countParams,
-				Parametros = detalleParams
-			});
-
+			TablaFunciones.Add(new Funcion { TipoRetorno = tipoRet, Nombre = nombre, NumParametros = countParams, Parametros = detalle });
 			AnalizarCuerpo();
-			ambitoActual = ambitoAnterior;
-			tipoFuncionActual = "";
+			ambitoActual = anterior;
 		}
 
 		private void ProcesarMain()
@@ -173,199 +178,204 @@ namespace Editor_de_texto.Clases
 
 		private void AnalizarCuerpo()
 		{
-			SkipLF();
-			Match("{");
+			SkipLF(); Match("{");
 			while (PeekToken() != "}" && PeekToken() != "EOF")
 			{
+				int tokenIndexInicial = tokenIndex;
 				SkipLF();
 				string t = PeekToken();
 
 				if (IsTipoDato(t)) ProcesarDeclaracionVariable();
-				else if (t.ToLower() == "if")
-				{
-					Match("if"); Match("(");
-					ValidarExpresion(")"); // Valida la condición interna
-					Match(")");
-					AnalizarCuerpo();
-				}
-				else if (t.ToLower() == "return")
-				{
-					GetToken();
-					if (tipoFuncionActual.ToLower() == "int" && PeekToken().Contains("."))
-						Error("Error Semántico: Retorno incompatible (decimal en función int).");
-
-					ValidarExpresion(";");
-					Match(";");
-				}
+				else if (t.ToLower() == "if") { Match("if"); Match("("); AnalizarExpresion(")"); Match(")"); AnalizarCuerpo(); }
+				else if (t.ToLower() == "return") { GetToken(); AnalizarExpresion(";"); Match(";"); }
 				else
 				{
-					string idActual = GetToken();
+					if (t == "}") break;
 
-					if (EsIdentificadorValido(idActual))
+					if (EsIdentificadorValido(t) && PeekNextNoLF() == "=")
 					{
-						if (!ExisteSimbolo(idActual) && idActual != "printf")
-						{
-							Error($"Error Semántico: '{idActual}' no ha sido declarado.");
-						}
-					}
-
-					if (PeekToken() == "=")
-					{
+						string nombreVar = GetToken();
 						Match("=");
-						ValidarExpresion(";");
-						Match(";");
+						UltimoArbolGenerado = AnalizarExpresion(";");
+						ResultadoExpresion = EvaluarArbol(UltimoArbolGenerado);
+
+						var v = TablaVariables.Find(var => var.Nombre == nombreVar);
+						if (v != null) v.ValorNum = ResultadoExpresion;
 					}
-					else if (PeekToken() == "(")
-					{
-						Match("(");
-						ValidarExpresion(")");
-						Match(")");
-						Match(";");
-					}
+					else { AnalizarFactor(); }
+					Match(";");
 				}
+				if (tokenIndex == tokenIndexInicial) GetToken();
 				SkipLF();
 			}
 			Match("}");
 		}
 
-		// --- CORRECCIÓN CLAVE: El analizador de expresiones ---
-		// Se encarga de revisar que los valores estén separados por comas u operadores
-		private void ValidarExpresion(string delimitador)
+		// --- MOTOR DE EXPRESIONES (ÁRBOL BINARIO) ---
+		private NodoExpresion AnalizarExpresion(string delimitadorFinal)
 		{
-			bool ultimoFueValor = false;
-
-			while (PeekToken() != delimitador && PeekToken() != ";" && PeekToken() != "EOF" && PeekToken() != "LF")
+			NodoExpresion izq = AnalizarTermino();
+			while (PeekToken() == "+" || PeekToken() == "-")
 			{
-				string token = PeekToken();
+				string op = GetToken();
+				NodoExpresion der = AnalizarTermino();
+				NodoExpresion nuevo = new NodoExpresion(op);
+				nuevo.Izquierdo = izq;
+				nuevo.Derecho = der;
+				izq = nuevo;
+			}
+			return izq;
+		}
 
-				if (token == "(")
+		private NodoExpresion AnalizarTermino()
+		{
+			NodoExpresion izq = AnalizarFactor();
+			while (PeekToken() == "*" || PeekToken() == "/" || PeekToken() == "%")
+			{
+				string op = GetToken();
+				NodoExpresion der = AnalizarFactor();
+				NodoExpresion nuevo = new NodoExpresion(op);
+				nuevo.Izquierdo = izq;
+				nuevo.Derecho = der;
+				izq = nuevo;
+			}
+			return izq;
+		}
+
+		private NodoExpresion AnalizarFactor()
+		{
+			string token = PeekToken();
+			NodoExpresion nodo = null;
+
+			if (token == "(")
+			{
+				Match("(");
+				nodo = AnalizarExpresion(")");
+				Match(")");
+			}
+			else if (EsOperadorUnario(token))
+			{
+				string op = GetToken();
+				nodo = new NodoExpresion(op);
+				nodo.Derecho = AnalizarFactor();
+			}
+			else if (EsIdentificadorValido(token))
+			{
+				string id = GetToken();
+				if (!ExisteSimbolo(id) && id != "printf") Error($"Error Semántico: '{id}' no declarado.");
+				nodo = new NodoExpresion(id);
+
+				if (PeekToken() == "(")
 				{
-					GetToken(); // Consumimos el '('
-					ValidarExpresion(")"); // Analizamos lo de adentro de forma recursiva
+					Match("(");
+					if (PeekToken() != ")")
+					{
+						AnalizarExpresion(")");
+						while (PeekToken() == ",") { Match(","); AnalizarExpresion(")"); }
+					}
 					Match(")");
-					ultimoFueValor = true;
+					nodo = new NodoExpresion("Funcion_" + id);
 				}
-				else if (token == ",")
+				else if (PeekToken() == "++" || PeekToken() == "--")
 				{
-					GetToken();
-					ultimoFueValor = false; // Después de una coma, esperamos otro valor
-				}
-				else if (EsOperador(token))
-				{
-					GetToken();
-					ultimoFueValor = false; // Después de un operador (+, -), esperamos otro valor
-				}
-				else
-				{
-					// Si el token es un número, variable o cadena
-					if (ultimoFueValor)
-					{
-						// ¡ERROR! Encontramos dos valores pegados sin coma ni operador (Ej: 10 20)
-						Error($"Error Sintáctico: Falta ',' u operador antes de '{token}'.");
-					}
-					GetToken();
-					ultimoFueValor = true;
+					string op = GetToken();
+					NodoExpresion post = new NodoExpresion(op);
+					post.Izquierdo = nodo;
+					nodo = post;
 				}
 			}
-		}
-
-		// Diccionario de operadores permitidos
-		private bool EsOperador(string t)
-		{
-			string[] ops = { "+", "-", "*", "/", "%", "==", "!=", "<", ">", "<=", ">=", "&&", "||", "!" };
-			return ops.Contains(t);
-		}
-
-		private bool EsIdentificadorValido(string t)
-		{
-			if (string.IsNullOrEmpty(t)) return false;
-			if (t.ToLower() == "cadena") return false;
-			if (t.StartsWith("\"") || t.StartsWith("'")) return false;
-			if (t.Length == 1 && !char.IsLetter(t[0])) return false;
-			if (double.TryParse(t, out _)) return false;
-			return char.IsLetter(t[0]);
-		}
-
-		public void ExportarTablasCSV(string rutaBase)
-		{
-			if (N_error > 0) return;
-
-			try
+			else if (EsConstante(token)) { nodo = new NodoExpresion(GetToken()); }
+			else
 			{
-				string ruta = Path.ChangeExtension(rutaBase, ".csv");
-				using (StreamWriter sw = new StreamWriter(ruta, false, Encoding.UTF8))
-				{
-					sw.WriteLine("TABLA DE VARIABLES");
-					sw.WriteLine("Nombre,Tipo,Origen");
-					foreach (var v in TablaVariables) sw.WriteLine($"{v.Nombre},{v.Tipo},{v.Origen}");
+				Error($"Error Sintáctico: Operando no válido '{token}'.");
+				GetToken();
+				nodo = new NodoExpresion("ERROR");
+			}
+			return nodo;
+		}
 
-					sw.WriteLine("\nTABLA DE FUNCIONES");
-					sw.WriteLine("Tipo de retorno,Nombre,Núm de Parametro,Parametros");
-					foreach (var f in TablaFunciones)
-					{
-						string paramSeguros = string.IsNullOrEmpty(f.Parametros) ? "" : f.Parametros.Replace(",", " |");
-						sw.WriteLine($"{f.TipoRetorno},{f.Nombre},{f.NumParametros},{paramSeguros}");
-					}
+		private double EvaluarArbol(NodoExpresion nodo)
+		{
+			if (nodo == null) return 0;
+			if (double.TryParse(nodo.Valor, out double num)) return num;
+
+			var variable = TablaVariables.Find(v => v.Nombre == nodo.Valor);
+			if (variable != null) return variable.ValorNum;
+
+			if (EsOperador(nodo.Valor))
+			{
+				double izq = EvaluarArbol(nodo.Izquierdo);
+				double der = EvaluarArbol(nodo.Derecho);
+				switch (nodo.Valor)
+				{
+					case "+": return izq + der;
+					case "-": return izq - der;
+					case "*": return izq * der;
+					case "/": return der != 0 ? izq / der : 0;
+					case "%": return der != 0 ? izq % der : 0;
 				}
 			}
-			catch (Exception ex) { Error("Error CSV: " + ex.Message); }
+
+			if (nodo.Valor == "++") return EvaluarArbol(nodo.Izquierdo ?? nodo.Derecho) + 1;
+			if (nodo.Valor == "--") return EvaluarArbol(nodo.Izquierdo ?? nodo.Derecho) - 1;
+
+			return 0;
 		}
 
-		private void MostrarResultadosEnPantalla()
-		{
-			CajaTexto2.AppendText("\n--- TABLA DE VARIABLES ---\n");
-			CajaTexto2.AppendText("Nombre\t| Tipo\t| Origen\n");
-			CajaTexto2.AppendText(new string('-', 30) + "\n");
-			foreach (var v in TablaVariables) CajaTexto2.AppendText($"{v.Nombre}\t| {v.Tipo}\t| {v.Origen}\n");
-
-			CajaTexto2.AppendText("\n--- TABLA DE FUNCIONES ---\n");
-			CajaTexto2.AppendText("Retorno\t| Nombre\t| Parametros\n");
-			CajaTexto2.AppendText(new string('-', 45) + "\n");
-			foreach (var f in TablaFunciones)
-				CajaTexto2.AppendText($"{f.TipoRetorno}\t| {f.Nombre}\t| ({f.NumParametros}) {f.Parametros}\n");
-		}
-
-		// --- MÉTODOS AUXILIARES ---
+		// --- UTILIDADES ---
+		private bool EsOperador(string t) => new[] { "+", "-", "*", "/", "%", "==", "!=", "<", ">", "<=", ">=", "&&", "||" }.Contains(t);
+		private bool EsOperadorUnario(string t) => new[] { "++", "--", "!", "&", "*" }.Contains(t);
+		private bool EsConstante(string t) => double.TryParse(t, out _) || t.StartsWith("'") || t.StartsWith("\"") || t == "true" || t == "false";
+		private bool EsIdentificadorValido(string t) => !string.IsNullOrEmpty(t) && !IsTipoDato(t) && !EsConstante(t) && !EsOperador(t) && (char.IsLetter(t[0]) || t[0] == '_');
+		private bool IsTipoDato(string t) => TiposDeDatos.Contains(t);
+		private bool ExisteSimbolo(string n) => TablaVariables.Exists(v => v.Nombre == n) || TablaFunciones.Exists(f => f.Nombre == n);
 		private string GetToken() => (tokenIndex < tokenBuffer.Count) ? tokenBuffer[tokenIndex++] : "EOF";
 		private string PeekToken() => (tokenIndex < tokenBuffer.Count) ? tokenBuffer[tokenIndex] : "EOF";
 		private void SkipLF() { while (PeekToken() == "LF") GetToken(); }
-
-		private void Match(string esperado)
-		{
-			SkipLF();
-			if (PeekToken() == esperado)
-			{
-				GetToken();
-			}
-			else
-			{
-				Error($"Error Sintáctico: Se esperaba '{esperado}' pero se encontró '{PeekToken()}'.");
-			}
-		}
-
-		private void Error(string msg)
-		{
-			N_error++;
-			CajaTexto2.AppendText($"> {msg}\n");
-		}
-
-		private bool IsTipoDato(string t) => TiposDeDatos.Contains(t);
-		private bool ExisteSimbolo(string n) => TablaVariables.Exists(v => v.Nombre == n) || TablaFunciones.Exists(f => f.Nombre == n);
+		private void Match(string esp) { SkipLF(); if (PeekToken() == esp) GetToken(); else Error($"Se esperaba '{esp}' pero se halló '{PeekToken()}'."); }
+		private void Error(string msg) { N_error++; CajaTexto2.AppendText($"> {msg}\n"); }
 
 		private string PeekNextNoLF()
 		{
-			int i = 1;
-			while (tokenIndex + i < tokenBuffer.Count && tokenBuffer[tokenIndex + i] == "LF") i++;
+			int i = 1; while (tokenIndex + i < tokenBuffer.Count && tokenBuffer[tokenIndex + i] == "LF") i++;
 			return (tokenIndex + i < tokenBuffer.Count) ? tokenBuffer[tokenIndex + i] : "EOF";
 		}
 
 		private bool EsDefinicionDeFuncion()
 		{
-			int i = 1;
-			while (tokenIndex + i < tokenBuffer.Count && tokenBuffer[tokenIndex + i] == "LF") i++;
-			i++;
-			while (tokenIndex + i < tokenBuffer.Count && tokenBuffer[tokenIndex + i] == "LF") i++;
+			int i = 1; while (tokenIndex + i < tokenBuffer.Count && tokenBuffer[tokenIndex + i] == "LF") i++;
+			i++; while (tokenIndex + i < tokenBuffer.Count && tokenBuffer[tokenIndex + i] == "LF") i++;
 			return (tokenIndex + i < tokenBuffer.Count && tokenBuffer[tokenIndex + i] == "(");
+		}
+
+		public void ExportarTablasCSV(string rutaBase)
+		{
+			if (N_error > 0) return;
+			try
+			{
+				using (StreamWriter sw = new StreamWriter(Path.ChangeExtension(rutaBase, ".csv"), false, Encoding.UTF8))
+				{
+					sw.WriteLine("TABLA DE VARIABLES\nNombre,Tipo,Origen,Valor");
+					foreach (var v in TablaVariables) sw.WriteLine($"{v.Nombre},{v.Tipo},{v.Origen},{v.ValorNum}");
+					sw.WriteLine("\nTABLA DE FUNCIONES\nRetorno,Nombre,Params,Detalle");
+					foreach (var f in TablaFunciones) sw.WriteLine($"{f.TipoRetorno},{f.Nombre},{f.NumParametros},{f.Parametros.Replace(",", "|")}");
+				}
+			}
+			catch (Exception ex) { MessageBox.Show(ex.Message); }
+		}
+
+		private void MostrarResultadosEnPantalla()
+		{
+			CajaTexto2.AppendText("\n VARIABLES \n");
+			foreach (var v in TablaVariables) CajaTexto2.AppendText($"{v.Nombre}\t| {v.Tipo}\t| {v.Origen}\t| Val: {v.ValorNum}\n");
+			CajaTexto2.AppendText("\n FUNCIONES \n");
+			foreach (var f in TablaFunciones) CajaTexto2.AppendText($"{f.TipoRetorno}\t| {f.Nombre}\t| ({f.NumParametros}) {f.Parametros}\n");
+
+			if (UltimoArbolGenerado != null)
+			{
+				CajaTexto2.AppendText($" Raíz del Árbol : {UltimoArbolGenerado.Valor}\n");
+				CajaTexto2.AppendText($"\n Resultado matemático: {ResultadoExpresion}");
+			}
 		}
 	}
 }
